@@ -3,14 +3,18 @@ import numbers
 import logging
 import sys
 import influxdb
-from functools32 import lru_cache
+from functools import lru_cache
 from pyslet.iso8601 import TimePoint
 import pyslet.rfc2396 as uri
 from pyslet.odata2.core import EntityCollection, CommonExpression, PropertyExpression, BinaryExpression, \
-    LiteralExpression, Operator, SystemQueryOption, FormatExpand, FormatSelect, ODataURI
+    LiteralExpression, Operator, SystemQueryOption,  ODataURI, format_expand, format_select
 from pyslet.py2 import to_text
 
 from local import request
+
+import urllib3
+#Disable Warnings about self signed Certificate
+urllib3.disable_warnings()
 
 logger = logging.getLogger("odata-influxdb")
 
@@ -40,14 +44,16 @@ class InfluxDBEntityContainer(object):
     container
         pyslet.odata2.csdl.EntityContainer
 
-    dsn
-        data source name in the format: influxdb://user:pass@host:port/
-        supported schemes include https+influxdb:// and udp+influxdb://
+    user
+        
     """
-    def __init__(self, container, dsn, topmax, **kwargs):
+    def __init__(self, container, user, pwd, prt, serverHost, topmax, **kwargs):
         self.container = container
-        self.dsn = dsn
-        self.client = influxdb.InfluxDBClient.from_DSN(self.dsn)
+        self.user = user
+        self.pwd = pwd
+        self.prt = prt
+        self.serverHost = serverHost
+        self.client = influxdb.InfluxDBClient(host=serverHost,port=prt,username=user, password=pwd,ssl=True)
         self._topmax = topmax
         for es in self.container.EntitySet:
             self.bind_entity_set(es)
@@ -122,7 +128,7 @@ class InfluxDBMeasurement(EntityCollection):
         if request and request.args.get('aggregate'):
             max_count = len(interval_list)
         else:
-            max_count = max(val for val in rs.get_points().next().values() if isinstance(val, numbers.Number))
+            max_count = max(val for val in rs.get_points().__next__().values() if isinstance(val, numbers.Number))
         self._influxdb_len = max_count
         return max_count
 
@@ -207,10 +213,15 @@ class InfluxDBMeasurement(EntityCollection):
             self._limit_expression(),
         ).strip()
         logger.info('Querying InfluxDB: {}'.format(q))
-
-        result = self.container.client.query(q, database=self.db_name)
+        
+        try:
+            print(q)
+            self.container.client.switch_database(self.db_name)
+            result = self.container.client.query(q)
+        except Exception as e:
+            print(e)
         #fields = get_tags_and_field_keys(self.container.client, self.measurement_name, self.db_name)
-
+        #print(str(len(result.keys())))
         for measurement_name, tag_set in result.keys():
             for row in result[measurement_name, tag_set]:
                 e = self.new_entity()
@@ -324,9 +335,7 @@ class InfluxDBMeasurement(EntityCollection):
             return self._sql_where_expression(expression)
 
     def _format_literal(self, val):
-        if isinstance(val, unicode):
-            return u"'{}'".format(val)
-        elif isinstance(val, TimePoint):
+        if isinstance(val, TimePoint):
             return u"'{0.date} {0.time}'".format(val)
         else:
             return str(val)
@@ -367,11 +376,14 @@ class InfluxDBMeasurement(EntityCollection):
             self.top = self.skip = 0
             self.skiptoken = self.nextSkiptoken = None
         else:
-            # yield one page
-            self.nextSkiptoken = (self.skiptoken or 0) + min(len(self), self.top)
-            for e in self.itervalues():
-                yield e
-            self.paging = False
+            try:
+                # yield one page
+                self.nextSkiptoken = (self.skiptoken or 0) + min(len(self), self.top)
+                for e in self.itervalues():
+                    yield e
+                self.paging = False
+            except Exception as e:
+                print(e)
 
     def get_next_page_location(self):
         """Returns the location of this page of the collection
@@ -383,18 +395,18 @@ class InfluxDBMeasurement(EntityCollection):
             sysQueryOptions = {}
             if self.filter is not None:
                 sysQueryOptions[
-                    SystemQueryOption.filter] = unicode(self.filter)
+                    SystemQueryOption.filter] = str(self.filter)
             if self.expand is not None:
                 sysQueryOptions[
-                    SystemQueryOption.expand] = FormatExpand(self.expand)
+                    SystemQueryOption.expand] = format_expand(self.expand)
             if self.select is not None:
                 sysQueryOptions[
-                    SystemQueryOption.select] = FormatSelect(self.select)
+                    SystemQueryOption.select] = format_select(self.select)
             if self.orderby is not None:
                 sysQueryOptions[
                     SystemQueryOption.orderby] = CommonExpression.OrderByToString(
                     self.orderby)
-            sysQueryOptions[SystemQueryOption.skiptoken] = unicode(token)
+            sysQueryOptions[SystemQueryOption.skiptoken] = str(token)
             extraOptions = ''
             if request:
                 extraOptions = u'&' + u'&'.join([
@@ -402,7 +414,8 @@ class InfluxDBMeasurement(EntityCollection):
             return uri.URI.from_octets(
                 str(baseURL) +
                 "?" +
-                ODataURI.FormatSysQueryOptions(sysQueryOptions) +
+                #ODataURI.FormatSysQueryOptions(sysQueryOptions) +
+                ODataURI.format_sys_query_options(sysQueryOptions) +
                 extraOptions
             )
         else:
