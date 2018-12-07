@@ -2,8 +2,8 @@ import argparse
 import logging
 import os
 import sys
-from urlparse import urlparse
-from ConfigParser import ConfigParser
+from urllib.parse import urlparse
+from configparser import ConfigParser
 from wsgiref.simple_server import make_server
 from werkzeug.wrappers import AuthorizationMixin, BaseRequest, Response
 from local import local, local_manager
@@ -59,23 +59,26 @@ class FileExistsError(IOError):
 def load_metadata(config):
     """Regenerate and load the metadata file and connects the InfluxDBEntityContainer."""
     metadata_filename = config.get('metadata', 'metadata_file')
-    dsn = config.get('influxdb', 'dsn')
+    user = config.get('influxdb', 'user')
+    pwd = config.get('influxdb', 'pwd')
+    prt = config.get('influxdb', 'prt')
+    serverHost = config.get('influxdb', 'serverHost')
 
     if config.getboolean('metadata', 'autogenerate'):
         logger.info("Generating OData metadata xml file from InfluxDB metadata")
-        metadata = generate_metadata(dsn)
-        with open(metadata_filename, 'wb') as f:
+        metadata = generate_metadata(user, pwd, prt, serverHost)
+        with open(metadata_filename, 'w') as f:
             f.write(metadata)
 
     doc = edmx.Document()
-    with open(metadata_filename, 'rb') as f:
-        doc.ReadFromStream(f)
+    with open(metadata_filename, 'r') as f:
+        doc.read_from_stream(f)
     container = doc.root.DataServices['InfluxDBSchema.InfluxDB']
     try:
         topmax = config.getint('influxdb', 'max_items_per_query')
     except:
         topmax = 50
-    InfluxDBEntityContainer(container=container, dsn=dsn, topmax=topmax)
+    InfluxDBEntityContainer(container=container, user=user, pwd=pwd, prt=prt, serverHost=serverHost, topmax=topmax)
     return doc
 
 
@@ -111,9 +114,10 @@ def get_sample_config():
     config.set('metadata', '; metadata_file specifies the location of the metadata file to generate')
     config.set('metadata', 'metadata_file', 'test_metadata.xml')
     config.add_section('influxdb')
-    config.set('influxdb', '; supported schemes include https+influxdb:// and udp+influxdb://')
-    config.set('influxdb', '; user:pass in this dsn is used for generating metadata')
-    config.set('influxdb', 'dsn', 'influxdb://user:pass@localhost:8086')
+    config.set('influxdb', 'user', 'user')
+    config.set('influxdb', 'pwd', 'pass')
+    config.set('influxdb', 'prt', '8086')
+    config.set('influxdb', 'serverHost', 'localhost')
     config.set('influxdb', 'max_items_per_query', '50')
     config.set('influxdb', '; authentication_required will pass through http basic auth username')
     config.set('influxdb', '; and password to influxdb')
@@ -128,11 +132,11 @@ def make_sample_config():
         raise FileExistsError(sample_name)
     with open(sample_name, 'w') as cf:
         config.write(cf)
-    print('generated sample conf at: {}'.format(os.path.join(os.getcwd(), sample_name)))
+    print(('generated sample conf at: {}'.format(os.path.join(os.getcwd(), sample_name))))
 
 
 def get_config(config):
-    with open(config, 'r') as fp:
+    with open(os.path.join(os.getcwd(), config), 'r') as fp:
         c = get_sample_config()
         c.readfp(fp)
     return c

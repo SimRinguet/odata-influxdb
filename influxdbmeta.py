@@ -2,6 +2,10 @@ from itertools import chain
 
 from influxdb import InfluxDBClient
 
+import urllib3
+#Disable Warnings about self signed Certificate
+urllib3.disable_warnings()
+
 xml_head = """<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx"
            xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"
@@ -53,8 +57,10 @@ def db_name__measurement_name(db_name, m_name):
 
 
 class InfluxDB(object):
-    def __init__(self, dsn):
-        self.client = InfluxDBClient.from_DSN(dsn)
+    client = InfluxDBClient()
+    
+    def __init__(self, user, pwd, prt, serverHost):
+        self.client = InfluxDBClient(host=serverHost,port=prt,username=user, password=pwd,ssl=True)
 
     def fields(self, db_name):
         """returns a tuple of dicts where each dict has attributes (name, type, edm_type)"""
@@ -125,9 +131,9 @@ def entity_sets_and_types(db):
     return entity_sets, entity_types
 
 
-def generate_metadata(dsn):
+def generate_metadata(user, pwd, prt, serverHost):
     """connect to influxdb, read the structure, and return an edmx xml file string"""
-    i = InfluxDB(dsn)
+    i = InfluxDB(serverHost=serverHost,prt=prt,user=user, pwd=pwd)
     entity_sets, entity_types = entity_sets_and_types(i)
     output = """{}
     <EntityContainer Name="InfluxDB" m:IsDefaultEntityContainer="true">
